@@ -1,6 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Icon from '@/components/ui/icon';
 
+const AUTH_URL = 'https://functions.poehali.dev/5b596f5c-cdae-4f25-a488-beffe3a44eed';
+
+async function authApi(action: string, data: object = {}, sessionId?: string) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (sessionId) headers['X-Session-Id'] = sessionId;
+  const res = await fetch(`${AUTH_URL}?action=${action}`, {
+    method: action === 'me' ? 'GET' : 'POST',
+    headers,
+    body: action === 'me' ? undefined : JSON.stringify({ action, ...data }),
+  });
+  return res.json();
+}
+
+type AuthUser = { id: number; username: string; display_name: string; email: string; bio: string; avatar_color: string };
 type Page = 'feed' | 'profile' | 'messages' | 'notifications' | 'search' | 'subscriptions' | 'settings';
 
 const MOCK_VIDEOS = [
@@ -92,12 +106,48 @@ const SEARCH_RESULTS = [
 ];
 
 export default function App() {
+  const [authScreen, setAuthScreen] = useState<'login' | 'register' | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [authForm, setAuthForm] = useState({ username: '', display_name: '', email: '', login: '', password: '' });
+
   const [page, setPage] = useState<Page>('feed');
   const [videos, setVideos] = useState(MOCK_VIDEOS);
   const [searchQuery, setSearchQuery] = useState('');
   const [openVideo, setOpenVideo] = useState<number | null>(null);
   const [comment, setComment] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const sid = localStorage.getItem('session_id');
+    if (!sid) { setAuthLoading(false); setAuthScreen('login'); return; }
+    authApi('me', {}, sid).then(data => {
+      if (data.user) setUser(data.user);
+      else { localStorage.removeItem('session_id'); setAuthScreen('login'); }
+      setAuthLoading(false);
+    }).catch(() => { setAuthLoading(false); setAuthScreen('login'); });
+  }, []);
+
+  const handleAuth = async (action: 'login' | 'register') => {
+    setAuthError('');
+    const data = action === 'login'
+      ? { login: authForm.login, password: authForm.password }
+      : { username: authForm.username, display_name: authForm.display_name, email: authForm.email, password: authForm.password };
+    const res = await authApi(action, data);
+    if (res.error) { setAuthError(res.error); return; }
+    localStorage.setItem('session_id', res.session_id);
+    setUser(res.user);
+    setAuthScreen(null);
+  };
+
+  const handleLogout = async () => {
+    const sid = localStorage.getItem('session_id');
+    await authApi('logout', {}, sid || undefined);
+    localStorage.removeItem('session_id');
+    setUser(null);
+    setAuthScreen('login');
+  };
 
   const nav = [
     { id: 'feed', icon: 'Home', label: 'Лента' },
@@ -120,6 +170,126 @@ export default function App() {
   };
 
   const currentVideo = openVideo ? videos.find(v => v.id === openVideo) : null;
+
+  const avatarInitials = user
+    ? user.display_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+    : 'ВМ';
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center glow-blue animate-pulse">
+            <Icon name="Zap" size={22} className="text-white" />
+          </div>
+          <p className="text-muted-foreground text-sm">Загрузка...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (authScreen) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center px-4">
+        <div className="w-full max-w-sm animate-scale-in">
+          <div className="flex flex-col items-center gap-2 mb-8">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center glow-blue mb-1">
+              <Icon name="Zap" size={26} className="text-white" />
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight">СоцСеть</h1>
+            <p className="text-sm text-muted-foreground">
+              {authScreen === 'login' ? 'Войдите в свой аккаунт' : 'Создайте новый аккаунт'}
+            </p>
+          </div>
+
+          <div className="bg-card border border-border/60 rounded-2xl p-6 space-y-3">
+            {authScreen === 'register' && (
+              <>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Имя пользователя</label>
+                  <input
+                    type="text"
+                    placeholder="например: ivan_petrov"
+                    value={authForm.username}
+                    onChange={e => setAuthForm(f => ({ ...f, username: e.target.value }))}
+                    className="w-full bg-muted/60 border border-border/60 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-muted-foreground"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Отображаемое имя</label>
+                  <input
+                    type="text"
+                    placeholder="Иван Петров"
+                    value={authForm.display_name}
+                    onChange={e => setAuthForm(f => ({ ...f, display_name: e.target.value }))}
+                    className="w-full bg-muted/60 border border-border/60 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-muted-foreground"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Email</label>
+                  <input
+                    type="email"
+                    placeholder="ivan@example.com"
+                    value={authForm.email}
+                    onChange={e => setAuthForm(f => ({ ...f, email: e.target.value }))}
+                    className="w-full bg-muted/60 border border-border/60 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-muted-foreground"
+                  />
+                </div>
+              </>
+            )}
+
+            {authScreen === 'login' && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Логин или Email</label>
+                <input
+                  type="text"
+                  placeholder="ivan_petrov или ivan@example.com"
+                  value={authForm.login}
+                  onChange={e => setAuthForm(f => ({ ...f, login: e.target.value }))}
+                  className="w-full bg-muted/60 border border-border/60 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-muted-foreground"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Пароль</label>
+              <input
+                type="password"
+                placeholder="Минимум 6 символов"
+                value={authForm.password}
+                onChange={e => setAuthForm(f => ({ ...f, password: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && handleAuth(authScreen)}
+                className="w-full bg-muted/60 border border-border/60 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-muted-foreground"
+              />
+            </div>
+
+            {authError && (
+              <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2.5 text-sm text-rose-400">
+                {authError}
+              </div>
+            )}
+
+            <button
+              onClick={() => handleAuth(authScreen)}
+              className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm mt-1"
+            >
+              {authScreen === 'login' ? 'Войти' : 'Зарегистрироваться'}
+            </button>
+          </div>
+
+          <p className="text-center text-sm text-muted-foreground mt-4">
+            {authScreen === 'login' ? 'Нет аккаунта? ' : 'Уже есть аккаунт? '}
+            <button
+              onClick={() => { setAuthScreen(authScreen === 'login' ? 'register' : 'login'); setAuthError(''); setAuthForm({ username: '', display_name: '', email: '', login: '', password: '' }); }}
+              className="text-blue-400 hover:text-blue-300 font-medium transition-colors"
+            >
+              {authScreen === 'login' ? 'Зарегистрироваться' : 'Войти'}
+            </button>
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background font-golos flex">
@@ -164,12 +334,12 @@ export default function App() {
 
         <div className="px-3 py-4 border-t border-border/60">
           <button onClick={() => setPage('profile')} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-muted/60 cursor-pointer transition-colors">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
-              ВМ
+            <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${user?.avatar_color || 'from-blue-500 to-indigo-600'} flex items-center justify-center text-xs font-bold text-white shrink-0`}>
+              {avatarInitials}
             </div>
             <div className="flex-1 min-w-0 text-left">
-              <div className="text-sm font-semibold truncate">Михаил Вы</div>
-              <div className="text-xs text-muted-foreground truncate">@mikhail</div>
+              <div className="text-sm font-semibold truncate">{user?.display_name || 'Профиль'}</div>
+              <div className="text-xs text-muted-foreground truncate">@{user?.username || ''}</div>
             </div>
             <Icon name="ChevronRight" size={14} className="text-muted-foreground shrink-0" />
           </button>
@@ -516,8 +686,8 @@ export default function App() {
               <div className="relative h-36 rounded-2xl bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900 mb-14 overflow-hidden">
                 <div className="absolute inset-0 opacity-30" style={{backgroundImage: 'radial-gradient(circle at 30% 50%, #3b82f6 0%, transparent 60%), radial-gradient(circle at 80% 20%, #6366f1 0%, transparent 50%)'}} />
                 <div className="absolute -bottom-10 left-6">
-                  <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-xl font-bold text-white border-4 border-background glow-blue">
-                    ВМ
+                  <div className={`w-20 h-20 rounded-2xl bg-gradient-to-br ${user?.avatar_color || 'from-blue-500 to-indigo-600'} flex items-center justify-center text-xl font-bold text-white border-4 border-background glow-blue`}>
+                    {avatarInitials}
                   </div>
                 </div>
               </div>
@@ -525,15 +695,15 @@ export default function App() {
               <div className="px-2">
                 <div className="flex items-start justify-between mb-3">
                   <div>
-                    <h2 className="text-xl font-bold">Михаил Вы</h2>
-                    <p className="text-sm text-muted-foreground">@mikhail · Присоединился в феврале 2026</p>
+                    <h2 className="text-xl font-bold">{user?.display_name}</h2>
+                    <p className="text-sm text-muted-foreground">@{user?.username}</p>
                   </div>
                   <button className="text-sm font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 px-4 py-2 rounded-xl transition-colors">
                     Редактировать
                   </button>
                 </div>
                 <p className="text-sm text-foreground/80 mb-4 leading-relaxed">
-                  Создаю видео о технологиях и науке. Будущий космонавт 🚀
+                  {user?.bio || 'Расскажите о себе — нажмите «Редактировать»'}
                 </p>
 
                 <div className="flex gap-5 mb-5 text-sm">
@@ -606,7 +776,7 @@ export default function App() {
               ))}
 
               <div className="bg-card border border-border/60 rounded-2xl overflow-hidden">
-                <button className="w-full flex items-center gap-3.5 px-4 py-3.5 hover:bg-rose-500/5 transition-colors text-left">
+                <button onClick={handleLogout} className="w-full flex items-center gap-3.5 px-4 py-3.5 hover:bg-rose-500/5 transition-colors text-left">
                   <div className="w-9 h-9 rounded-xl bg-rose-500/10 flex items-center justify-center shrink-0">
                     <Icon name="LogOut" size={17} className="text-rose-400" />
                   </div>
@@ -680,8 +850,8 @@ export default function App() {
               <div className="mt-3">
                 <p className="text-sm font-semibold mb-3">{currentVideo.comments} комментариев</p>
                 <div className="flex gap-2.5 mb-3">
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-[10px] font-bold text-white shrink-0 mt-0.5">
-                    ВМ
+                  <div className={`w-7 h-7 rounded-full bg-gradient-to-br ${user?.avatar_color || 'from-blue-500 to-indigo-600'} flex items-center justify-center text-[10px] font-bold text-white shrink-0 mt-0.5`}>
+                    {avatarInitials}
                   </div>
                   <div className="flex-1 flex gap-2">
                     <input
